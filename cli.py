@@ -10,6 +10,11 @@ from app import main
 
 @click.command(context_settings=dict(help_option_names=['-h', '--help']))
 @click.option(
+    '--deposit-account',
+    '-n',
+    default='',
+    help='Name string used to filter on multiple bank accounts, otherwise first account found is used')
+@click.option(
     '--deposit-amount',
     '-d',
     default='100.00',
@@ -34,8 +39,14 @@ from app import main
     multiple=True,
     help='A currency and the percentage of available funds that should be allocated to it. This option may be provided multiple times for different currencies and the total percentage should add up to 1. If the total percentage is less than one, the remainder will be left as USD. \n\nExample: -a ETH 0.25 -a BTC 0.25 -a LTC 0.5'
 )
-def run(deposit_amount, deposit_interval, min_available_to_trade,
-        allocation_percentage):
+@click.option(
+    '--no-fee',
+    '-f',
+    is_flag=True,
+    help='Post-only allocation transations, will attempt to buy using slightly less than the current value to avoid fees'
+)
+def run(deposit_account, deposit_amount, deposit_interval, min_available_to_trade,
+        allocation_percentage, no_fee):
     """
     This script automates recurring USD deposits and asset allocation for GDAX.
 
@@ -96,5 +107,5 @@ def run(deposit_amount, deposit_interval, min_available_to_trade,
     def print_function(message):
         click.echo('{}: {}'.format(datetime.datetime.now(), message))
 
-    main(deposit_amount, deposit_interval, min_available_to_trade,
-         allocation_percentage, print_function)
+    main(deposit_account, deposit_amount, deposit_interval, min_available_to_trade,
+         allocation_percentage, no_fee, print_function)

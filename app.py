@@ -14,12 +14,12 @@ client = gdax.AuthenticatedClient(
     os.environ.get('GDAX_PASSPHRASE'))
 
 
-def get_bank_id(client=client):
+def get_bank_id(client=client, match_substring=''):
     account_type = 'ach_bank_account'
     payment_methods = client.get_payment_methods()
-
     for p in payment_methods:
-        if p['type'] == account_type:
+        if p['type'] == account_type and match_substring in p['name']:
+            print(p['name'])
             return p['id']
 
 
@@ -71,53 +71,78 @@ def get_available_to_trade(client=client):
     account = get_usd_account(client=client)
     return Decimal(account['available'])
 
-
-def buy(currency, amount_in_usd, client=client, dry_run=False):
-    pair = '{}-USD'.format(currency)
+def market_buy_params(product_id, amount_in_usd):
     funds = amount_in_usd.quantize(Decimal('.01'), rounding=ROUND_DOWN)
-    buy_params = dict(
-        product_id=pair, type='market', side='buy', funds=str(funds))
+    return dict(
+        product_id=product_id, type='market', side='buy', funds=str(funds))
+
+def limit_buy_params(product_id, amount_in_usd, client=client):
+    ticker = client.get_product_ticker(product_id)
+    limit_price = Decimal(ticker['price']) - Decimal(0.50)
+    amount_in_crypto = (amount_in_usd / limit_price).quantize(Decimal('.000000001'),
+                                                              rounding=ROUND_DOWN)
+    return dict(product_id=product_id,
+                side='buy',
+                price=str(limit_price),
+                size=str(amount_in_crypto)
+                )
+
+def buy(currency, amount_in_usd, client=client,
+        buy_param_fn=market_buy_params, dry_run=False):
+    pair = '{}-USD'.format(currency)
+    buy_params = buy_param_fn(pair, amount_in_usd)
     if dry_run:
-        print('dry_run')
+        print('dry_run: {}'.format(currency))
         print(buy_params)
     else:
         return client.buy(**buy_params)
 
 
 def allocate_usd(client=client,
-                 dry_run=False,
                  get_available_to_trade=get_available_to_trade,
                  allocation_percentages=dict(),
-                 minimum_available_to_trade=Decimal('100')):
+                 minimum_available_to_trade=Decimal('100'),
+                 no_fee=False):
     available = get_available_to_trade(client=client)
     buys = list()
     if available >= minimum_available_to_trade:
         amounts = allocation_amounts(available, allocation_percentages)
         for currency, amount_in_usd in amounts.items():
-            buys.append(
-                buy(currency, amount_in_usd, client=client, dry_run=dry_run))
+            if no_fee:
+                buys.append(
+                    buy(currency,
+                        amount_in_usd,
+                        client=client,
+                        buy_param_fn=limit_buy_params)
+                )
+            else:
+                buys.append(
+                    buy(currency, amount_in_usd, client=client))
     return buys
 
 
-def deposit(amount, client=client):
-    payment_id = get_bank_id(client=client)
-    return client.deposit(
-        amount=amount, currency='USD', payment_method_id=payment_id)
+def deposit(amount, account_name='', client=client, dry_run=False):
+    payment_id = get_bank_id(client=client, match_substring=account_name)
+    if dry_run:
+        print('Dry run buy: {}'.format(amount))
+    else:
+        return client.deposit(
+            amount=amount, currency='USD', payment_method_id=payment_id)
 
 
-def main(deposit_amount, deposit_interval, min_available_to_trade,
-         asset_allocation, print_fn):
+def main(deposit_account, deposit_amount, deposit_interval, min_available_to_trade,
+         asset_allocation, no_fee, print_fn):
     prev_deposits = get_all_deposits()
     print_fn('Checking whether to deposit...')
     if should_create_deposit(prev_deposits, interval=deposit_interval):
         print_fn('No deposit in {}. Creating deposit for ${}.'.format(
             deposit_interval, deposit_amount))
-        print_fn(p(deposit(deposit_amount)))
+        print_fn(p(deposit(deposit_amount, account_name=deposit_account)))
     else:
         print_fn('Skipped deposit.')
 
     print_fn('Checking whether to allocate...')
-    allocations = allocate_usd(
+    allocations = allocate_usd(no_fee=no_fee,
         minimum_available_to_trade=min_available_to_trade,
         allocation_percentages=asset_allocation)
     if not allocations:
